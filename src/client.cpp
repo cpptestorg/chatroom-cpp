@@ -92,7 +92,9 @@ int eraseText(int cnt)
 	for(int i=0; i<cnt; i++)
 	{
 		cout<<back_space;
-	}	
+	}
+
+	return 0;
 }
 
 // Send message to everyone

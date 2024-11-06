@@ -8,8 +8,8 @@ A chatroom built in C++ using the concepts of socket programming and multi-threa
 1. Clone this repository
 2. Run the following commands in your terminal :
 ```
-g++ server.cpp -lpthread -o server
-g++ client.cpp -lpthread -o client
+g++ ./src/server.cpp -lpthread -o server
+g++ ./src/client.cpp -lpthread -o client
 ```
 3. To run the server application, use this command in the terminal :
 ```
