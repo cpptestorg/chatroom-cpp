@@ -1,4 +1,4 @@
 #!/bin/bash
 
-cd ./src
+cd ./build
 rm server client

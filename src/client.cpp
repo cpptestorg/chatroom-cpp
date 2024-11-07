@@ -2,13 +2,11 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <errno.h>
 #include <string.h>
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <thread>
 #include <signal.h>
-#include <mutex>
 #define MAX_LEN 200
 #define NUM_COLORS 6
 
@@ -39,7 +37,7 @@ int main()
 	client.sin_port=htons(10000); // Port no. of server
 	client.sin_addr.s_addr=INADDR_ANY;
 	//client.sin_addr.s_addr=inet_addr("127.0.0.1"); // Provide IP address of server
-	bzero(&client.sin_zero,0);
+	bzero(&client.sin_zero, size_t(0));
 
 	if((connect(client_socket,(struct sockaddr *)&client,sizeof(struct sockaddr_in)))==-1)
 	{
@@ -57,8 +55,8 @@ int main()
 	thread t1(send_message, client_socket);
 	thread t2(recv_message, client_socket);
 
-	t_send=move(t1);
-	t_recv=move(t2);
+	t_send = std::move(t1);
+	t_recv = std::move(t2);
 
 	if(t_send.joinable())
 		t_send.join();

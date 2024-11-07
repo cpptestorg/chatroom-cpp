@@ -2,39 +2,42 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <errno.h>
 #include <string.h>
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <thread>
 #include <mutex>
-#define MAX_LEN 200
-#define NUM_COLORS 6
 
-using namespace std;
-
+// Define the client struct.
 struct terminal
 {
-	int id;
-	string name;
+	unsigned id;
+	std::string name;
 	int socket;
-	thread th;
+	std::thread th;
 };
 
-vector<terminal> clients;
-string def_col = "\033[0m";
-string colors[] = { "\033[31m", "\033[32m", "\033[33m", "\033[34m", "\033[35m","\033[36m" };
-int seed = 0;
-mutex cout_mtx, clients_mtx;
+// Define the constants used by the server.
+constexpr unsigned maxMsgLength {200U};
+constexpr unsigned colorCount {6U};
+constexpr unsigned maxClients {5U};
 
-string color(int code);
-void set_name(int id, char name[]);
-void shared_print(string str, bool endLine);
-int broadcast_message(string message, int sender_id);
-int broadcast_message(int num, int sender_id);
-void end_connection(int id);
-void handle_client(int client_socket, int id);
+std::array<terminal, maxClients> clients;
+std::array<std::string, colorCount> colors {"\033[31m", "\033[32m", "\033[33m", "\033[34m", "\033[35m", "\033[36m"};
+std::string resetColor {"\033[0m"};
 
+std::mutex coutMutex, clientMutex;
+
+// Function forward declarations (make a separate file later).
+const std::string& getColor(int code);
+void setName(int id, const std::string& name);
+void sharedPrint(const std::string& string, bool endLine = true);
+void broadcastMessage(const std::string& message, int senderId);
+void broadcastMessage(int num, int senderId);
+void endConnection(int id);
+void handleClient(int clientSocket, int id);
+
+// Main program entry point.
 int main()
 {
 	int server_socket;
@@ -48,7 +51,7 @@ int main()
 	server.sin_family = AF_INET;
 	server.sin_port = htons(10000);
 	server.sin_addr.s_addr = INADDR_ANY;
-	bzero(&server.sin_zero, 0);
+	bzero(&server.sin_zero, size_t(0));
 
 	if ((bind(server_socket, (struct sockaddr*)&server, sizeof(struct sockaddr_in))) == -1)
 	{
@@ -66,9 +69,10 @@ int main()
 	int client_socket;
 	unsigned int len = sizeof(sockaddr_in);
 
-	cout << colors[NUM_COLORS - 1] << "\n\t  ====== Welcome to the chat-room ======   " << endl << def_col;
+	std::cout << colors.back() << "\n\t  ====== Welcome to the chat-room ======   " << resetColor << std::endl;
+	unsigned seed {};
 
-	while (1)
+	while (true)
 	{
 		if ((client_socket = accept(server_socket, (struct sockaddr*)&client, &len)) == -1)
 		{
@@ -76,124 +80,101 @@ int main()
 			exit(-1);
 		}
 		seed++;
-		thread t(handle_client, client_socket, seed);
-		lock_guard<mutex> guard(clients_mtx);
-		clients.push_back({ seed, string("Anonymous"),client_socket,(move(t)) });
+		std::thread t(handleClient, client_socket, seed);
+		std::lock_guard<std::mutex> guard(clientMutex);
+
+		clients.at(seed) = {seed, "Anonymous", client_socket, std::move(t)};
 	}
 
-	for (int i = 0; i < clients.size(); i++)
-	{
-		if (clients[i].th.joinable())
-			clients[i].th.join();
-	}
+	for (const auto& client : clients)
+		if (client.th.joinable())
+			client.th.joinable();
 
 	close(server_socket);
 	return 0;
 }
 
-string color(int code)
+const std::string& getColor(int code)
 {
-	return colors[code % NUM_COLORS];
+	return colors.at(code % colorCount);
 }
 
-// Set name of client
-void set_name(int id, char name[])
+// Set name of client, because we use an array, we can use the index as the id and avoid a loop.
+void setName(int id, const std::string& name)
 {
-	for (int i = 0; i < clients.size(); i++)
-	{
-		if (clients[i].id == id)
-		{
-			clients[i].name = string(name);
-		}
-	}
+	if (clients.at(id).socket != 0)
+		clients.at(id).name = name;
 }
 
 // For synchronisation of cout statements
-void shared_print(string str, bool endLine = true)
+void sharedPrint(const std::string& str, bool endLine)
 {
-	lock_guard<mutex> guard(cout_mtx);
-	cout << str;
+	std::lock_guard<std::mutex> guard(coutMutex);
+	std::cout << str;
 	if (endLine)
-		cout << endl;
+		std::cout << std::endl;
 }
 
 // Broadcast message to all clients except the sender
-int broadcast_message(string message, int sender_id)
+void broadcastMessage(const std::string& message, int senderId)
 {
-	char temp[MAX_LEN];
+	char temp[maxMsgLength];
 	strcpy(temp, message.c_str());
-	for (int i = 0; i < clients.size(); i++)
-	{
-		if (clients[i].id != sender_id)
-		{
-			send(clients[i].socket, temp, sizeof(temp), 0);
-		}
-	}
 
-	return 0;
+	for (int i {}; i < maxClients; i++)
+		if (clients.at(i).socket != 0 && clients.at(i).id != senderId)
+			send(clients.at(i).socket, temp, sizeof(temp), 0);
 }
 
 // Broadcast a number to all clients except the sender
-int broadcast_message(int num, int sender_id)
+void broadcastMessage(int num, int senderId)
 {
-	for (int i = 0; i < clients.size(); i++)
-	{
-		if (clients[i].id != sender_id)
-		{
-			send(clients[i].socket, &num, sizeof(num), 0);
-		}
-	}
-
-	return 0;
+	for (int i {}; i < maxClients; i++)
+		if (clients.at(i).socket != 0 && clients.at(i).id != senderId)
+			send(clients.at(i).socket, &num, sizeof(num), 0);
 }
 
-void end_connection(int id)
+void endConnection(int id)
 {
-	for (int i = 0; i < clients.size(); i++)
-	{
-		if (clients[i].id == id)
-		{
-			lock_guard<mutex> guard(clients_mtx);
-			clients[i].th.detach();
-			clients.erase(clients.begin() + i);
-			close(clients[i].socket);
-			break;
-		}
-	}
+	std::lock_guard<std::mutex> guard(clientMutex);
+	clients.at(id).th.detach();
+	clients.at(id) = {};
+	close(clients.at(id).socket);
 }
 
-void handle_client(int client_socket, int id)
+void handleClient(int clientSocket, int id)
 {
-	char name[MAX_LEN], str[MAX_LEN];
-	recv(client_socket, name, sizeof(name), 0);
-	set_name(id, name);
+	char name[maxMsgLength], str[maxMsgLength];
+	recv(clientSocket, name, sizeof(name), 0);
+	setName(id, name);
 
 	// Display welcome message
-	string welcome_message = string(name) + string(" has joined");
-	broadcast_message("#NULL", id);
-	broadcast_message(id, id);
-	broadcast_message(welcome_message, id);
-	shared_print(color(id) + welcome_message + def_col);
+	std::string welcome_message = std::string(name) + std::string(" has joined");
+	broadcastMessage("#NULL", id);
+	broadcastMessage(id, id);
+	broadcastMessage(welcome_message, id);
+	sharedPrint(getColor(id) + welcome_message + resetColor);
 
-	while (1)
+	while (true)
 	{
-		int bytes_received = recv(client_socket, str, sizeof(str), 0);
+		int bytes_received = recv(clientSocket, str, sizeof(str), 0);
 		if (bytes_received <= 0)
 			return;
+
 		if (strcmp(str, "#exit") == 0)
 		{
 			// Display leaving message
-			string message = string(name) + string(" has left");
-			broadcast_message("#NULL", id);
-			broadcast_message(id, id);
-			broadcast_message(message, id);
-			shared_print(color(id) + message + def_col);
-			end_connection(id);
+			std::string message = std::string(name) + std::string(" has left");
+			broadcastMessage("#NULL", id);
+			broadcastMessage(id, id);
+			broadcastMessage(message, id);
+			sharedPrint(getColor(id) + message + resetColor);
+			endConnection(id);
 			return;
 		}
-		broadcast_message(string(name), id);
-		broadcast_message(id, id);
-		broadcast_message(string(str), id);
-		shared_print(color(id) + name + " : " + def_col + str);
+		broadcastMessage(std::string(name), id);
+		broadcastMessage(id, id);
+		broadcastMessage(std::string(str), id);
+		sharedPrint(getColor(id) + name + " : " + resetColor + str);
 	}
 }
